@@ -45,6 +45,31 @@ class ResolverTests(unittest.TestCase):
                 resolve_mods.update_ini(ini, {"Mods": "third"})
             self.assertEqual(ini.read_text(), "Mods=first\nMods=second\n")
 
+    def test_common_and_b42_map_layers_are_applied_in_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            common = root / "mods/RV_Interior/common/media/maps/interior"
+            b42 = root / "mods/RV_Interior/42/media/maps/interior"
+            common.mkdir(parents=True)
+            b42.mkdir(parents=True)
+            (common / "map.info").write_text("common")
+            (b42 / "map.info").write_text("b42")
+            sources = resolve_mods.map_sources(root, "interior")
+            self.assertEqual(sources, [common, b42])
+            destination = root / "installed/interior"
+            from shutil import copytree
+            for source in sources:
+                copytree(source, destination, dirs_exist_ok=True)
+            self.assertEqual((destination / "map.info").read_text(), "b42")
+
+    def test_unrelated_duplicate_map_sources_remain_ambiguous(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "mods/A/media/maps/interior").mkdir(parents=True)
+            (root / "mods/B/media/maps/interior").mkdir(parents=True)
+            with self.assertRaisesRegex(ValueError, "unambiguous source"):
+                resolve_mods.map_sources(root, "interior")
+
 
 if __name__ == "__main__":
     unittest.main()

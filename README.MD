@@ -90,7 +90,9 @@ only `WorkshopItems`, `Mods`, and `Map` are generated from the manifest; the
 legacy environment-variable mod and automatic map scanning paths are skipped.
 Those three INI keys are replaced on every start; keep other gameplay settings
 in the writable `/home/steam/Zomboid` volume. Map spawn regions are not
-automatically modified in manifest mode. Prefer `workshopId` over a name; a
+automatically modified in manifest mode. Build 42 map folders split between
+`common/` and `42/` are copied in that order; unrelated duplicate map folders
+remain an error. Prefer `workshopId` over a name; a
 name-only entry requires `STEAM_WEB_API_KEY` and an unambiguous exact Steam
 Workshop title. See the chart README for the manifest fields and migration
 notes. Never supply `ADMINPASSWORD` to the container: the game logs it in its

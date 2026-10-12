@@ -94,6 +94,19 @@ def select(requested, found, label, item_id):
     return selected
 
 
+def map_sources(folder, map_name):
+    sources = [path for path in folder.rglob("media/maps/" + map_name) if path.is_dir()]
+    if len(sources) == 1:
+        return sources
+    # Build 42 items may ship the same map under common/ and 42/. Apply the
+    # shared files first and the B42 files second, just as the mod itself does.
+    common = [path for path in sources if path.parents[2].name == "common"]
+    b42 = [path for path in sources if path.parents[2].name == "42"]
+    if len(common) <= 1 and len(b42) == 1 and len(common) + len(b42) == len(sources):
+        return common + b42
+    raise ValueError(f"expected one unambiguous source for map {map_name!r}; found {sources}")
+
+
 def update_ini(path, values):
     original = path.read_text() if path.exists() else ""
     lines: list[str] = [str(line) for line in original.splitlines(keepends=True)]
@@ -148,11 +161,9 @@ def main():
                 mod_ids.append(mod_id)
         maps.extend(chosen_maps)
         for map_name in chosen_maps:
-            sources = list(folder.rglob("media/maps/" + map_name))
-            if len(sources) != 1 or not sources[0].is_dir():
-                raise ValueError(f"{item_id}: expected one source directory for map {map_name!r}")
             destination = args.install / "media" / "maps" / map_name
-            shutil.copytree(sources[0], destination, dirs_exist_ok=True)
+            for source in map_sources(folder, map_name):
+                shutil.copytree(source, destination, dirs_exist_ok=True)
         print(f"Resolved {item.get('name', item_id)} ({item_id}): {chosen_mods}, maps: {chosen_maps}")
     # PZ expects the base map last. Do not rewrite any unrelated INI setting.
     update_ini(args.ini, {
