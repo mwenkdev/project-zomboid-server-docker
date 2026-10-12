@@ -213,8 +213,8 @@ if [ -n "${UDPPORT}" ]; then
   set_ini_option "UDPPort" "${UDPPORT}"
 fi
 
-if [ "${SELF_MANAGED_MODS}" == "1" ] || [ "${SELF_MANAGED_MODS,,}" == "true" ]; then
-  echo "*** INFO: SELF_MANAGED_MODS is set; leaving Mods and WorkshopItems untouched ***"
+if [ -n "${MOD_MANIFEST}" ] || [ "${SELF_MANAGED_MODS}" == "1" ] || [ "${SELF_MANAGED_MODS,,}" == "true" ]; then
+  echo "*** INFO: Skipping legacy Mods and WorkshopItems environment management ***"
 else
   if [ -n "${MOD_IDS}" ]; then
     echo "*** INFO: Found Mods including ${MOD_IDS} ***"
@@ -240,7 +240,7 @@ WORKSHOP_CONTENT_DIR="${STEAMAPPDIR}/steamapps/workshop/content/108600"
 MAPS_FILE="${HOMEDIR}/maps.txt"
 SPAWNREGIONS_FILE="${HOMEDIR}/Zomboid/Server/${SERVERNAME}_spawnregions.lua"
 
-if [ -d "${WORKSHOP_CONTENT_DIR}" ]; then
+if [ -z "${MOD_MANIFEST}" ] && [ -d "${WORKSHOP_CONTENT_DIR}" ]; then
 
   # Run the script as a child process instead of sourcing it: it ends with `exit 1` when
   # the folder is not a directory, and while sourced that exit tears down this entrypoint
@@ -315,6 +315,17 @@ if [ -d "${WORKSHOP_CONTENT_DIR}" ]; then
     else
       echo "*** INFO: The spawn regions file does not exist yet, the spawn points of the new maps will be added on the next start ***"
     fi
+  fi
+fi
+
+# With a manifest the chart owns only WorkshopItems, Mods and Map. Resolve and
+# download the requested items before launching the game; fail rather than start
+# against a partially updated mod set. All other INI values remain on the PVC.
+if [ -n "${MOD_MANIFEST}" ]; then
+  if ! python3 /server/scripts/resolve_mods.py \
+    --manifest "${MOD_MANIFEST}" --ini "${SERVERINI}" \
+    --steamcmd "${STEAMCMDDIR}" --install "${STEAMAPPDIR}"; then
+    exit 1
   fi
 fi
 

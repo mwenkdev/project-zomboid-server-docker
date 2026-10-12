@@ -1,48 +1,72 @@
-name: Docker Image CI
+name: Build and publish server image
 
 on:
-  schedule:
-  - cron: "0 */6 * * *"
+  pull_request:
+    paths:
+      - Dockerfile
+      - scripts/**
+      - tests/**
+      - .github/workflows/docker-image.yml
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - scripts/**
+      - tests/**
+      - .github/workflows/docker-image.yml
+  release:
+    types: [published]
   workflow_dispatch:
-    inputs:
-      force_build:
-        description: "Rebuild and publish the current version right away. Changes to the Dockerfile or the scripts are published by the next scheduled run on their own, this only skips the wait."
-        type: boolean
-        default: false
 
-# Never run two of these at once: both would see the same tags on Docker Hub, pick the same
-# revision number and push over each other.
-concurrency:
-  group: docker-image-ci
-  cancel-in-progress: false
+permissions:
+  contents: read
 
 jobs:
-
-  build:
-
+  verify:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout the latest version
-        uses: actions/checkout@v7
-        with:
-          # The script dates the last change to the Dockerfile and the scripts from the git
-          # history, which a shallow clone does not have.
-          fetch-depth: 0
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-    
-      - name: Check the latest version and push new versions
-        shell: bash
-        env:
-          FORCE_BUILD: ${{ inputs.force_build }}
+      - uses: actions/checkout@v4
+      - name: Test resolver and entrypoint
         run: |
-          # make file runnable, might not be necessary
-          chmod +x "${GITHUB_WORKSPACE}/scripts/get_updates.sh"
+          python3 -m unittest discover -s tests -v
+          bash -n scripts/entry.sh
+      - uses: docker/setup-buildx-action@v3
+      - name: Build container without publishing
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
 
-          # run script
-          "${GITHUB_WORKSPACE}/scripts/get_updates.sh"
+  publish:
+    if: ${{ github.event_name == 'release' && !github.event.release.prerelease }}
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+      - name: Validate release tag and commit
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git merge-base --is-ancestor HEAD origin/main
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish release image to GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.event.release.tag_name }}
+            ghcr.io/${{ github.repository }}:latest

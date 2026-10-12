@@ -20,6 +20,7 @@ ENV STEAMAPPBRANCH=$STEAMAPPBRANCH
 RUN apt-get update \
   && apt-get install -y --no-install-recommends --no-install-suggests \
   dos2unix \
+  python3 \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 
@@ -57,6 +58,8 @@ RUN set -x \
 # Copy the entry point file
 COPY --chown=${USER}:${USER} scripts/entry.sh /server/scripts/entry.sh
 RUN chmod 550 /server/scripts/entry.sh
+
+COPY --chown=${USER}:${USER} scripts/resolve_mods.py /server/scripts/resolve_mods.py
 
 # Copy searchfolder file
 COPY --chown=${USER}:${USER} scripts/search_folder.sh /server/scripts/search_folder.sh

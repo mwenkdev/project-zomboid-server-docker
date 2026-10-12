@@ -3,3 +3,4 @@ data/*
 workshop-mods/*
 !workshop-mods/.gitkeep
 .env
+__pycache__/

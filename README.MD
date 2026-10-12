@@ -2,9 +2,14 @@
 
 This Dockerfile downloads the Project Zombie dedicated server using SteamCMD. Will allow you to deploy with ease a server in Kubernetes, Docker...
 
-The ready to use image is available here:
-
-https://hub.docker.com/r/danixu86/project-zomboid-dedicated-server
+This fork publishes release images to
+`ghcr.io/mwenkdev/project-zomboid-server-docker`. Pull a versioned image such
+as `:v1.0.0` after publishing the corresponding GitHub Release, or use the
+moving `:latest` tag. Pull requests and pushes to `main` build and test the
+image without publishing it. A non-prerelease GitHub Release tagged `vX.Y.Z`
+builds it from that tag and publishes both `:vX.Y.Z` and `:latest` to GHCR.
+Make the GHCR package public after its first publication if the cluster pulls
+without image credentials.
 
 > **Note:** Build 42 is now the stable build, so the default image already runs it. The `unstable` branch this note used to point at no longer exists on Steam: setting `STEAMAPPBRANCH` to it today fails the build with `ERROR! Failed to set beta 'unstable'`. See [SteamDB](https://steamdb.info/app/108600/depots/) for the branches that currently exist.
 
@@ -75,6 +80,21 @@ This image uses some env variables as arguments in the server command, allowing 
 Mods will install on second server start
 
 Maps are added on the same start on which the mods are detected, right after the workshop items have been downloaded.
+
+### Helm-managed Workshop manifest
+
+When `MOD_MANIFEST` points to a JSON array supplied by the Helm chart, the
+entrypoint downloads Workshop items with SteamCMD and resolves their `mod.info`
+IDs and optional `media/maps` folders before starting the server. In that mode
+only `WorkshopItems`, `Mods`, and `Map` are generated from the manifest; the
+legacy environment-variable mod and automatic map scanning paths are skipped.
+Those three INI keys are replaced on every start; keep other gameplay settings
+in the writable `/home/steam/Zomboid` volume. Map spawn regions are not
+automatically modified in manifest mode. Prefer `workshopId` over a name; a
+name-only entry requires `STEAM_WEB_API_KEY` and an unambiguous exact Steam
+Workshop title. See the chart README for the manifest fields and migration
+notes. Never supply `ADMINPASSWORD` to the container: the game logs it in its
+command-line arguments.
 
 ## Build time environment variables
 
