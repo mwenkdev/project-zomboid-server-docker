@@ -60,6 +60,7 @@ COPY --chown=${USER}:${USER} scripts/entry.sh /server/scripts/entry.sh
 RUN chmod 550 /server/scripts/entry.sh
 
 COPY --chown=${USER}:${USER} scripts/resolve_mods.py /server/scripts/resolve_mods.py
+COPY --chown=${USER}:${USER} scripts/admin_bootstrap_state.py /server/scripts/admin_bootstrap_state.py
 
 # Copy searchfolder file
 COPY --chown=${USER}:${USER} scripts/search_folder.sh /server/scripts/search_folder.sh

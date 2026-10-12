@@ -90,12 +90,10 @@ if [ -n "${ADMINUSERNAME}" ]; then
   ARGS+=("-adminusername" "${ADMINUSERNAME}")
 fi
 
-# Option to bypasses the enter-a-password prompt when creating a server.
-# This option is mandatory the first startup or will be asked in console and startup will fail.
-# Once is launched and data is created, then can be removed without problem.
-# Is recommended to remove it, because the server logs the arguments in clear text, so Admin password will be sent to log in every startup.
+# The game logs command-line arguments, so never pass the admin password here.
 if [ -n "${ADMINPASSWORD}" ]; then
-  ARGS+=("-adminpassword" "${ADMINPASSWORD}")
+  echo "*** ERROR: ADMINPASSWORD on the game command line is not supported; use ADMIN_BOOTSTRAP_PASSWORD ***" >&2
+  exit 1
 fi
 
 # Server password (Doesn't work)
@@ -373,6 +371,27 @@ mkfifo "${SERVER_CONSOLE}"
 # held open, the server would read EOF on stdin as soon as it started and stop accepting
 # console commands.
 exec {CONSOLE_FD}<>"${SERVER_CONSOLE}"
+
+# Project Zomboid asks for a password and confirmation on System.in when the
+# configured admin account is absent. Preload those two lines into the console
+# FIFO only in that case. A later restart must not send the password to the
+# server's command interpreter (which logs console commands).
+ADMIN_USER="${ADMINUSERNAME:-admin}"
+if ! BOOTSTRAP_STATE=$(python3 /server/scripts/admin_bootstrap_state.py \
+  "${HOMEDIR}/Zomboid/db/${SERVERNAME}.db" "${ADMIN_USER}"); then
+  echo "*** ERROR: unable to check the administrator account ***" >&2
+  exit 1
+fi
+if [ "${BOOTSTRAP_STATE}" = "needed" ]; then
+  if [ -z "${ADMIN_BOOTSTRAP_PASSWORD}" ] || [[ "${ADMIN_BOOTSTRAP_PASSWORD}" == *$'\n'* ]] || [[ "${ADMIN_BOOTSTRAP_PASSWORD}" == *$'\r'* ]]; then
+    echo "*** ERROR: a nonempty, single-line ADMIN_BOOTSTRAP_PASSWORD is required for the first start ***" >&2
+    exit 1
+  fi
+  printf '%s\n%s\n' "${ADMIN_BOOTSTRAP_PASSWORD}" "${ADMIN_BOOTSTRAP_PASSWORD}" >&"${CONSOLE_FD}"
+  echo "*** INFO: administrator bootstrap input queued for first start ***"
+fi
+# Keep the password out of the game process environment as well as its args.
+unset ADMIN_BOOTSTRAP_PASSWORD
 
 shutdown_server() {
   # A second signal while the world is still saving must not restart the handler.

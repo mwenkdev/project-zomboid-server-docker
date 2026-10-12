@@ -21,7 +21,7 @@ This image uses some env variables as arguments in the server command, allowing 
 
 `ADMINUSERNAME:` Sets the administrator username, otherwise `admin` will be used.
 
-`ADMINPASSWORD:` Sets or changes the admin password. Is mandatory at first startup or will fail. I recommend to remove it once the server is started because the server logs every argument in clear text (if doesn't cares, you can leave it).
+`ADMIN_BOOTSTRAP_PASSWORD:` Supplies the initial admin password to the game's stdin prompt when the admin account is missing. The password is never passed in game arguments and is not sent again after the account exists. Required for a fresh world; changing it later does not rotate an existing account. `ADMINPASSWORD` is rejected because the game logs its command-line arguments.
 
 `PASSWORD:` Sets or changes server password. Is optional.
 
@@ -94,7 +94,7 @@ automatically modified in manifest mode. Prefer `workshopId` over a name; a
 name-only entry requires `STEAM_WEB_API_KEY` and an unambiguous exact Steam
 Workshop title. See the chart README for the manifest fields and migration
 notes. Never supply `ADMINPASSWORD` to the container: the game logs it in its
-command-line arguments.
+command-line arguments. Use `ADMIN_BOOTSTRAP_PASSWORD` from a Secret instead.
 
 ## Build time environment variables
 
@@ -164,7 +164,7 @@ This ports are used by the No Steam clients to connect with the server, so it mu
 
 To setup the server you can use the docker-compose program:
 
-* Copy the .env.template to .env and edit it with the settings you want. The only mandatory variable is ADMINPASSWORD and just the first time the server is executed (once is started at least once, it can be removed). The other variables are optional.
+* Copy the .env.template to .env and edit it with the settings you want. A fresh server requires `ADMIN_BOOTSTRAP_PASSWORD` to create its admin account; it may remain set because subsequent starts do not send it to the game console.
 * Run the `docker-compose up -d` command to start the server.
 
 ## Scripts folder
