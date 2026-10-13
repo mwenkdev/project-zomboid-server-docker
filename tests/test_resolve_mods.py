@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -23,7 +24,7 @@ class ResolverTests(unittest.TestCase):
             ini.write_text("PublicName=Unchanged\nPassword=secret\nMap=OldMap;Muldraugh, KY\n")
             manifest = root / "mods.json"
             manifest.write_text(json.dumps([{"workshopId": "123"}]))
-            with patch.object(resolve_mods, "download", return_value=item), patch("sys.argv", [
+            with patch.object(resolve_mods, "prepare_workshop_items"), patch("sys.argv", [
                 "resolve_mods.py", "--manifest", str(manifest), "--ini", str(ini),
                 "--steamcmd", str(root), "--install", str(install),
             ]):
@@ -32,6 +33,56 @@ class ResolverTests(unittest.TestCase):
                 "PublicName=Unchanged\nPassword=secret\nMap=ExampleMap;Muldraugh, KY\n"
                 "WorkshopItems=123\nMods=ExampleMod\n")
             self.assertTrue((install / "media/maps/ExampleMap/map.info").exists())
+
+    def test_refresh_uses_one_steamcmd_session_for_all_items(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workshop = root / "install/steamapps/workshop/content/108600"
+            for item_id in ("123", "456"):
+                folder = workshop / item_id
+                folder.mkdir(parents=True)
+                (folder / "mod.info").write_text("id=Example\n")
+            with patch.object(resolve_mods.subprocess, "run") as run:
+                resolve_mods.prepare_workshop_items(
+                    ["123", "456"], root / "steamcmd", root / "install", workshop, True
+                )
+            run.assert_called_once()
+            args = run.call_args.args[0]
+            self.assertEqual(args.count("+login"), 1)
+            self.assertEqual(args.count("+workshop_download_item"), 2)
+            self.assertEqual(args[-1], "+quit")
+
+    def test_cached_items_skip_refresh_but_missing_items_download(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workshop = root / "install/steamapps/workshop/content/108600"
+            cached = workshop / "123"
+            cached.mkdir(parents=True)
+            (cached / "mod.info").write_text("id=Cached\n")
+            with patch.object(resolve_mods.subprocess, "run") as run:
+                resolve_mods.prepare_workshop_items(
+                    ["123"], root / "steamcmd", root / "install", workshop, False
+                )
+            run.assert_not_called()
+
+            def create_missing(args, check):
+                missing = workshop / "456"
+                missing.mkdir()
+                (missing / "mod.info").write_text("id=New\n")
+
+            with patch.object(resolve_mods.subprocess, "run", side_effect=create_missing) as run:
+                resolve_mods.prepare_workshop_items(
+                    ["123", "456"], root / "steamcmd", root / "install", workshop, False
+                )
+            args = run.call_args.args[0]
+            self.assertEqual(args.count("+workshop_download_item"), 1)
+            self.assertIn("456", args)
+            self.assertNotIn("123", args)
+
+    def test_update_setting_rejects_invalid_values(self):
+        with patch.dict(os.environ, {"MOD_UPDATE_ON_START": "sometimes"}):
+            with self.assertRaisesRegex(ValueError, "must be true or false"):
+                resolve_mods.update_on_start()
 
     def test_ambiguous_mod_ids_require_explicit_selection(self):
         with self.assertRaisesRegex(ValueError, "select explicitly"):

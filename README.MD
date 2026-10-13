@@ -98,6 +98,14 @@ Workshop title. See the chart README for the manifest fields and migration
 notes. Never supply `ADMINPASSWORD` to the container: the game logs it in its
 command-line arguments. Use `ADMIN_BOOTSTRAP_PASSWORD` from a Secret instead.
 
+`MOD_UPDATE_ON_START=true` (the default) checks every selected Workshop item
+with SteamCMD in one session. `false` skips that pre-start check for items
+already present under `${STEAMAPPDIR}/steamapps/workshop/content/108600`, but
+downloads missing items. Mount the `steamapps/workshop` directory on persistent
+storage to retain that cache across container replacements. The game itself
+also queries Steam Workshop, so `false` does not pin mod versions or prevent
+the game from updating them.
+
 ## Build time environment variables
 
 This env variables will be used at build time to generate the image.

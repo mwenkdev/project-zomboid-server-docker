@@ -44,22 +44,47 @@ def workshop_id(item):
     return str(matches[0]["publishedfileid"])
 
 
-def download(item_id, steamcmd, install_dir, workshop_dir):
-    target = workshop_dir / item_id
-    # SteamCMD puts Workshop downloads under its own steamapps directory on some
-    # versions, regardless of force_install_dir. Check both locations.
-    subprocess.run([
-        str(steamcmd / "steamcmd.sh"), "+force_install_dir", str(install_dir),
-        "+login", "anonymous", "+workshop_download_item", APP_ID, item_id,
-        "validate", "+quit",
-    ], check=True)
-    source = steamcmd / "steamapps" / "workshop" / "content" / APP_ID / item_id
-    if source.is_dir() and source.resolve() != target.resolve():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(source, target, dirs_exist_ok=True)
-    if not target.is_dir():
-        raise ValueError(f"Workshop item {item_id} was not installed at {target}")
-    return target
+def update_on_start():
+    value = os.environ.get("MOD_UPDATE_ON_START", "true").lower()
+    if value in ("true", "1"):
+        return True
+    if value in ("false", "0"):
+        return False
+    raise ValueError("MOD_UPDATE_ON_START must be true or false")
+
+
+def installed(folder):
+    return folder.is_dir() and any(folder.rglob("mod.info"))
+
+
+def prepare_workshop_items(item_ids, steamcmd, install_dir, workshop_dir, refresh):
+    # A persistent workshop directory survives pod replacements. Without a
+    # refresh, missing or incomplete items still need downloading.
+    to_download = [item_id for item_id in item_ids
+                   if refresh or not installed(workshop_dir / item_id)]
+    if to_download:
+        command = [
+            str(steamcmd / "steamcmd.sh"), "+force_install_dir", str(install_dir),
+            "+login", "anonymous",
+        ]
+        for item_id in to_download:
+            command.extend(("+workshop_download_item", APP_ID, item_id, "validate"))
+        command.append("+quit")
+        print(f"Checking {len(to_download)} Workshop items with one SteamCMD session", flush=True)
+        subprocess.run(command, check=True)
+    else:
+        print(f"Using {len(item_ids)} cached Workshop items without a SteamCMD refresh", flush=True)
+
+    # SteamCMD puts Workshop downloads under its own steamapps directory on
+    # some versions, regardless of force_install_dir. Check both locations.
+    for item_id in item_ids:
+        target = workshop_dir / item_id
+        source = steamcmd / "steamapps" / "workshop" / "content" / APP_ID / item_id
+        if item_id in to_download and source.is_dir() and source.resolve() != target.resolve():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(source, target, dirs_exist_ok=True)
+        if not installed(target):
+            raise ValueError(f"Workshop item {item_id} was not installed at {target}")
 
 
 def discover(folder):
@@ -147,7 +172,10 @@ def main():
         item_id = workshop_id(item)
         if item_id in ids:
             raise ValueError(f"Duplicate Workshop item {item_id}")
-        folder = download(item_id, args.steamcmd, args.install, workshop_dir)
+        ids.append(item_id)
+    prepare_workshop_items(ids, args.steamcmd, args.install, workshop_dir, update_on_start())
+    for item, item_id in zip(mods, ids):
+        folder = workshop_dir / item_id
         found_mods, found_maps = discover(folder)
         chosen_mods = select(item.get("modIds"), found_mods, "modIds", item_id)
         chosen_maps = select(item.get("maps"), found_maps, "maps", item_id)
@@ -155,7 +183,6 @@ def main():
             raise ValueError(f"No mod IDs selected for Workshop item {item_id}")
         if "Muldraugh, KY" in chosen_maps or set(chosen_maps) & set(maps):
             raise ValueError(f"{item_id}: duplicate or reserved map name in {chosen_maps}")
-        ids.append(item_id)
         for mod_id in chosen_mods:
             if mod_id not in mod_ids:
                 mod_ids.append(mod_id)
