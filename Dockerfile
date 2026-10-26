@@ -19,6 +19,7 @@ ENV STEAMAPPBRANCH=$STEAMAPPBRANCH
 # Install required packages
 RUN apt-get update \
   && apt-get install -y --no-install-recommends --no-install-suggests \
+  ca-certificates \
   dos2unix \
   python3 \
   && apt-get clean \
