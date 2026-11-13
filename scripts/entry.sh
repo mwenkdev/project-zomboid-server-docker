@@ -327,6 +327,26 @@ if [ -n "${MOD_MANIFEST}" ]; then
   fi
 fi
 
+# Linux is case-sensitive, but some Workshop mods reference their files with a
+# different case than they ship (e.g. media/animsets vs media/AnimSets). Add
+# lowercase symlink aliases to the Workshop cache once SteamCMD is done and before
+# the game starts. This runs on every start, also when MOD_UPDATE_ON_START=false,
+# so aliases removed by a mod update are recreated. Originals are never changed.
+case "${MOD_FIX_CASE:-true}" in
+  [Tt][Rr][Uu][Ee]|1)
+    if ! python3 /server/scripts/fix_mod_case.py "${WORKSHOP_CONTENT_DIR}"; then
+      echo "*** WARNING: the Workshop mod case fix failed; starting the server anyway ***" >&2
+    fi
+    ;;
+  [Ff][Aa][Ll][Ss][Ee]|0)
+    echo "*** INFO: MOD_FIX_CASE is false, skipping the Workshop mod case fix ***"
+    ;;
+  *)
+    echo "*** ERROR: MOD_FIX_CASE must be true or false ***" >&2
+    exit 1
+    ;;
+esac
+
 # The server picks its language from LANG, but a locale that was never generated in the
 # image is silently ignored by glibc, so the language change looks like it did nothing.
 # Warn about it instead, pointing at the build argument that generates extra locales.

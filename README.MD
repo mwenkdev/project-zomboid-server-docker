@@ -106,6 +106,39 @@ storage to retain that cache across container replacements. The game itself
 also queries Steam Workshop, so `false` does not pin mod versions or prevent
 the game from updating them.
 
+### Workshop mod case fix
+
+`MOD_FIX_CASE=true` (the default) works around Workshop mods that reference
+their own files with a different capitalization than they ship, which only
+fails on case-sensitive Linux filesystems (for example Tsar's Common Library
+asks for `media/animsets` but ships `media/AnimSets`). On every start, after
+SteamCMD has finished and before the game launches, `scripts/fix_mod_case.py`
+walks `${STEAMAPPDIR}/steamapps/workshop/content/108600` and adds a lowercase
+symlink next to each file or folder whose name contains uppercase characters
+(`animsets -> AnimSets`). It runs in both manifest and legacy modes and also
+when `MOD_UPDATE_ON_START=false`, so aliases removed by a mod update are
+recreated on the next start. Set `MOD_FIX_CASE=false` to disable it; any
+other value stops startup.
+
+* Original files are never modified, renamed, or deleted, and an existing
+  file, folder, or symlink is never replaced. Aliases from earlier runs are
+  counted as already present.
+* Symlinks are never followed. Names that lowercase to the same alias
+  (`Foo` and `FOO`), real lowercase twins, and symlinks pointing somewhere
+  else are logged as collisions and left alone.
+* The contents of `media/lua`, `media/scripts`, and `media/maps`, and the
+  mod folders directly under `mods/`, are not aliased. The game or this image
+  lists every entry in those folders, so an alias would be picked up as a
+  duplicate. A duplicate Lua file would also change the server's Lua checksum,
+  which clients have to match.
+* The log shows, per Workshop item, how many aliases were created, which mod
+  folders needed them, and any collision or permission error. A failure is
+  logged as a warning and does not stop the server from starting.
+
+To remove the aliases, stop the server and delete the symlinks, for example
+`find /home/steam/pz-dedicated/steamapps/workshop/content/108600 -type l -delete`
+(Workshop downloads do not normally contain symlinks of their own).
+
 ## Build time environment variables
 
 This env variables will be used at build time to generate the image.
@@ -183,6 +216,7 @@ In the scripts folders there are three scripts:
 
 * entry.sh: The script used in the image to start the server
 * search_folder.sh: Script to search through mod folders for any maps
+* fix_mod_case.py: Adds lowercase symlink aliases to Workshop mods (see `MOD_FIX_CASE`)
 * get_updates.sh: will perform a search of the latest version on the forum and the website to download and build the latest stable and unstable version. The local image will be created and it will try to upload the image to the Dockerhub website, but it will fail by the lack of permissions.
 
 Besides new Project Zomboid versions, the scheduled workflow also rebuilds the image whenever the Dockerfile or the scripts copied into it changed after the published image was built, so a merged fix reaches Docker Hub within six hours without any manual step. To publish right away instead of waiting, run the `Docker Image CI` workflow manually with the `force_build` option ticked, or run the script by hand with `FORCE_BUILD=true ./scripts/get_updates.sh`.
