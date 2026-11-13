@@ -199,6 +199,154 @@ class FixModCaseTests(unittest.TestCase):
         self.assertIn("nothing to do", text)
 
 
+PARENT_XML = "<animNode><m_Name>Parent</m_Name></animNode>"
+CHILD_XML = '<animNode x_extends="LS2HDefault.xml"><m_Name>Child</m_Name></animNode>'
+
+
+class ModFolderAliasTests(unittest.TestCase):
+    """A mod folder gets a lowercase alias only when its animation XML inherits."""
+
+    def setUp(self):
+        self._temp = tempfile.TemporaryDirectory()
+        self.root = Path(self._temp.name)
+        self.item = self.root / "3403870858"
+        self.mods = self.item / "mods"
+
+    def tearDown(self):
+        for directory, dirs, _ in os.walk(self.root):
+            for name in dirs:
+                path = os.path.join(directory, name)
+                if not os.path.islink(path):
+                    os.chmod(path, 0o755)
+        self._temp.cleanup()
+
+    def inheriting_mod(self, folder="Lifestyle", version="common", attribute="x_extends"):
+        anims = self.mods / folder / version / "media/AnimSets/player/melee/2handed"
+        write(self.mods / folder / version / "mod.info", f"id={folder}Id\n")
+        write(anims / "LS2HDefault.xml", PARENT_XML)
+        write(anims / "LS2HDefaultCrit.xml", CHILD_XML.replace("x_extends", attribute))
+        return anims
+
+    def test_x_extends_gets_mod_folder_alias_and_lowercased_parent_path_resolves(self):
+        self.inheriting_mod()
+        result = fix_mod_case.fix_tree(self.item)
+        self.assertEqual(os.readlink(self.mods / "lifestyle"), "Lifestyle")
+        # The exact path the game builds for the x_extends parent.
+        parent = self.mods / "lifestyle/common/media/animsets/player/melee/2handed/ls2hdefault.xml"
+        self.assertEqual(parent.read_text(), PARENT_XML)
+        self.assertEqual(result.mod_folder_aliases, ["mods/lifestyle -> Lifestyle"])
+        self.assertIn("Lifestyle", result.mods)
+        self.assertEqual(result.collisions, [])
+        self.assertEqual(result.errors, [])
+
+    def test_x_include_and_actiongroups_in_a_version_folder_are_detected(self):
+        write(self.mods / "MoreTraits/42.0/mod.info", "id=moreTraits\n")
+        write(self.mods / "MoreTraits/42.0/media/actiongroups/player/Hit.xml",
+              '<actiongroup x_include="Base.xml"/>')
+        fix_mod_case.fix_tree(self.item)
+        self.assertEqual(os.readlink(self.mods / "moretraits"), "MoreTraits")
+
+    def test_mod_folders_without_animation_inheritance_get_no_alias(self):
+        write(self.mods / "PlainMod/42/media/AnimSets/player/Idle.xml", PARENT_XML)
+        write(self.mods / "PlainMod/42/media/clothing/Shirt.xml", CHILD_XML)  # not animation XML
+        write(self.mods / "PlainMod/42/media/AnimSets/Readme.txt", "x_extends=")  # not XML
+        result = fix_mod_case.fix_tree(self.item)
+        self.assertFalse(os.path.lexists(self.mods / "plainmod"))
+        self.assertEqual(result.mod_folder_aliases, [])
+        # Everything inside the mod is still aliased as before.
+        self.assertEqual(os.readlink(self.mods / "PlainMod/42/media/animsets"), "AnimSets")
+
+    def test_lowercase_mod_folder_needs_no_alias(self):
+        self.inheriting_mod(folder="tsarslib")
+        result = fix_mod_case.fix_tree(self.item)
+        self.assertEqual(sorted(os.listdir(self.mods)), ["tsarslib"])
+        self.assertEqual(result.mod_folder_aliases, [])
+
+    def test_inheritance_reached_only_through_a_symlink_does_not_count(self):
+        outside = self.root / "outside/AnimSets"
+        write(outside / "Child.xml", CHILD_XML)
+        media = self.mods / "LinkedMod/42/media"
+        media.mkdir(parents=True)
+        os.symlink(outside, media / "AnimSets")
+        self.assertFalse(fix_mod_case.uses_xml_inheritance(self.mods / "LinkedMod"))
+        fix_mod_case.fix_tree(self.item)
+        self.assertFalse(os.path.lexists(self.mods / "linkedmod"))
+
+    def test_repeated_runs_are_idempotent_and_recreate_a_removed_alias(self):
+        self.inheriting_mod()
+        first = fix_mod_case.fix_tree(self.item)
+        before = snapshot(self.root)
+        second = fix_mod_case.fix_tree(self.item)
+        self.assertEqual(snapshot(self.root), before)
+        self.assertEqual(second.created, 0)
+        self.assertEqual(second.existing, first.created)
+        self.assertEqual(second.mod_folder_aliases, [])
+        os.unlink(self.mods / "lifestyle")  # e.g. removed by a SteamCMD update
+        third = fix_mod_case.fix_tree(self.item)
+        self.assertEqual(third.mod_folder_aliases, ["mods/lifestyle -> Lifestyle"])
+        self.assertEqual(snapshot(self.root), before)
+
+    def test_existing_alias_is_kept_even_if_the_mod_stops_inheriting(self):
+        anims = self.inheriting_mod()
+        fix_mod_case.fix_tree(self.item)
+        (anims / "LS2HDefaultCrit.xml").write_text(PARENT_XML)
+        result = fix_mod_case.fix_tree(self.item)
+        self.assertEqual(os.readlink(self.mods / "lifestyle"), "Lifestyle")
+        self.assertEqual(result.collisions, [])
+
+    def test_real_lowercase_mod_folder_is_a_collision_and_untouched(self):
+        self.inheriting_mod()
+        write(self.mods / "lifestyle/common/mod.info", "id=Other\n")
+        result = fix_mod_case.fix_tree(self.item)
+        self.assertFalse((self.mods / "lifestyle").is_symlink())
+        self.assertEqual((self.mods / "lifestyle/common/mod.info").read_text(), "id=Other\n")
+        self.assertEqual(len([c for c in result.collisions
+                              if "mods/lifestyle'" in c and "both exist" in c]), 1)
+        self.assertEqual(result.mod_folder_aliases, [])
+
+    def test_case_variant_mod_folders_are_a_collision(self):
+        self.inheriting_mod("Lifestyle")
+        self.inheriting_mod("LIFESTYLE")
+        result = fix_mod_case.fix_tree(self.item)
+        self.assertFalse(os.path.lexists(self.mods / "lifestyle"))
+        self.assertTrue(any("all lowercase to 'lifestyle'" in c for c in result.collisions))
+
+    def test_foreign_or_broken_symlink_at_alias_name_is_kept(self):
+        self.inheriting_mod()
+        os.symlink("Somewhere", self.mods / "lifestyle")
+        result = fix_mod_case.fix_tree(self.item)
+        self.assertEqual(os.readlink(self.mods / "lifestyle"), "Somewhere")
+        self.assertTrue(any("broken symlink" in c for c in result.collisions))
+
+    @unittest.skipIf(os.geteuid() == 0, "root ignores directory permissions")
+    def test_read_only_mods_folder_is_reported(self):
+        self.inheriting_mod()
+        os.chmod(self.mods, 0o555)
+        result = fix_mod_case.fix_tree(self.item)
+        self.assertFalse(os.path.lexists(self.mods / "lifestyle"))
+        self.assertTrue(any("cannot create" in e and "lifestyle" in e for e in result.errors))
+
+    def test_main_logs_the_mod_folder_alias(self):
+        self.inheriting_mod()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            fix_mod_case.main([str(self.root)])
+        self.assertIn("mod folder alias 'mods/lifestyle -> Lifestyle'", output.getvalue())
+
+    def test_resolver_still_sees_one_mod_and_its_maps(self):
+        from scripts import resolve_mods
+        self.inheriting_mod(version="42")
+        write(self.mods / "Lifestyle/42/media/maps/Some Map/map.info")
+        before = resolve_mods.discover(self.item)
+        fix_mod_case.fix_tree(self.item)
+        self.assertTrue((self.mods / "lifestyle").is_symlink())
+        self.assertEqual(resolve_mods.discover(self.item), before)
+        self.assertEqual(before, (["LifestyleId"], ["Some Map"]))
+        self.assertEqual(resolve_mods.map_sources(self.item, "Some Map"),
+                         [self.mods / "Lifestyle/42/media/maps/Some Map"])
+        self.assertTrue(resolve_mods.installed(self.item))
+
+
 class ResolverCompatibilityTests(unittest.TestCase):
     def test_aliases_do_not_change_discovered_mods_or_maps(self):
         from scripts import resolve_mods

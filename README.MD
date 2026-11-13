@@ -126,11 +126,20 @@ other value stops startup.
 * Symlinks are never followed. Names that lowercase to the same alias
   (`Foo` and `FOO`), real lowercase twins, and symlinks pointing somewhere
   else are logged as collisions and left alone.
-* The contents of `media/lua`, `media/scripts`, and `media/maps`, and the
-  mod folders directly under `mods/`, are not aliased. The game or this image
-  lists every entry in those folders, so an alias would be picked up as a
-  duplicate. A duplicate Lua file would also change the server's Lua checksum,
-  which clients have to match.
+* The contents of `media/lua`, `media/scripts`, and `media/maps` are not
+  aliased. The game or this image lists every entry in those folders, so an
+  alias would be picked up as a duplicate. A duplicate Lua file would also
+  change the server's Lua checksum, which clients have to match.
+* A mod folder directly under `mods/` gets an alias (`mods/lifestyle ->
+  Lifestyle`) only when one of its animation XML files (`media/AnimSets` or
+  `media/actiongroups`) uses `x_extends` or `x_include`. The game opens the
+  parent file of such an XML through the whole path lowercased, mod folder
+  included, so Lifestyle: Hobbies and More Traits Definitive Edition fail to
+  load some animations without it. Other mod folders are left alone: the game
+  lists every folder under `mods/`, so an alias shows up as a second folder for
+  the same mod ID. The game keeps one folder per ID and loads each ID once, and
+  its Lua, script and animation checksums hash file contents keyed by the path
+  inside the mod, so this extra folder does not change what is loaded.
 * The log shows, per Workshop item, how many aliases were created, which mod
   folders needed them, and any collision or permission error. A failure is
   logged as a warning and does not stop the server from starting.

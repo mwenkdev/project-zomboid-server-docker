@@ -24,19 +24,31 @@ enumerates every entry in them, so an alias would be a duplicate:
   twice and change the server's Lua checksum, which clients must match.
 - media/scripts: every script file is parsed, so duplicate definitions appear.
 - media/maps: map folders are listed by resolve_mods.py and search_folder.sh.
-- folders directly under <item>/mods: an alias would be found as a second
-  copy of the same mod.
 Folders with these names can still get an alias themselves (Lua -> lua); only
 their contents are skipped.
+
+Mod folders (directly under <item>/mods) get an alias only when the game
+needs one. An animation XML (media/AnimSets or media/actiongroups) that uses
+x_extends or x_include makes the game open its parent file through the whole
+path lowercased, mod folder included (ZomboidFileSystem.getRelativeFile), so
+mods/Lifestyle/... is looked up as mods/lifestyle/.... Other mod folders are
+left alone because the game lists every folder under mods/: an alias is seen
+as a second folder for the same mod ID. The game keeps one folder per mod ID
+and loads each ID once, so the duplicate is not loaded twice, but there is no
+reason to add one that nothing needs.
 """
 
 import argparse
 from dataclasses import dataclass, field
 import os
+import re
 import sys
 
 
 SKIPPED_MEDIA_SUBTREES = frozenset({"lua", "scripts", "maps"})
+ANIMATION_XML_DIRS = frozenset({"animsets", "actiongroups"})
+XML_INHERITANCE = re.compile(rb"\bx_(?:extends|include)\s*=", re.IGNORECASE)
+MAX_XML_BYTES = 4 * 1024 * 1024
 MAX_REPORTED = 20
 
 
@@ -47,6 +59,7 @@ class Result:
     collisions: list = field(default_factory=list)
     errors: list = field(default_factory=list)
     mods: set = field(default_factory=set)
+    mod_folder_aliases: list = field(default_factory=list)
 
 
 def _show(path):
@@ -60,6 +73,45 @@ def _skip_subtree(rel, name):
 
 def _mod_name(rel):
     return rel[1] if len(rel) >= 2 and rel[0] == "mods" else "(item root)"
+
+
+def uses_xml_inheritance(mod_dir):
+    """True if an animation XML in mod_dir uses x_extends or x_include.
+
+    Only real files below a media/AnimSets or media/actiongroups folder (any
+    case, any version folder) count. Symlinks, including aliases made by an
+    earlier run, are neither read nor followed. Unreadable files are skipped.
+    """
+    for directory, dirs, files in os.walk(mod_dir, followlinks=False):
+        parts = [part.lower() for part in os.path.relpath(directory, mod_dir).split(os.sep)]
+        in_animation_dir = any(
+            parts[i] == "media" and parts[i + 1] in ANIMATION_XML_DIRS for i in range(len(parts) - 1)
+        )
+        if not in_animation_dir:
+            continue
+        for name in files:
+            path = os.path.join(directory, name)
+            if not name.lower().endswith(".xml") or os.path.islink(path):
+                continue
+            try:
+                with open(path, "rb") as handle:
+                    if XML_INHERITANCE.search(handle.read(MAX_XML_BYTES)):
+                        return True
+            except OSError:
+                continue
+    return False
+
+
+def _keep_mod_folder_alias(directory, lower, originals, by_name):
+    """Decide whether a mod folder group should be handled at all."""
+    existing = by_name.get(lower)
+    if existing is not None and existing.is_symlink():
+        try:
+            if os.readlink(existing.path) in originals:
+                return True  # our alias from an earlier run: count it as present
+        except OSError:
+            pass
+    return any(uses_xml_inheritance(os.path.join(directory, name)) for name in originals)
 
 
 def _check_existing(path, original, result):
@@ -109,10 +161,15 @@ def fix_tree(item_root, result=None):
                 result.errors.append(f"cannot inspect {_show(entry.path)}: {error.strerror or error}")
                 continue
             lower = entry.name.lower()
-            if lower != entry.name and rel != ("mods",):
+            if lower != entry.name and (rel != ("mods",) or is_dir):
                 aliases.setdefault(lower, []).append(entry.name)
             if is_dir and not _skip_subtree(rel, entry.name):
                 pending.append((entry.path, rel + (entry.name,)))
+
+        if rel == ("mods",):
+            # Mod folders only get an alias when their animation XML needs it.
+            aliases = {lower: names for lower, names in aliases.items()
+                       if _keep_mod_folder_alias(directory, lower, names, by_name)}
 
         for lower in sorted(aliases):
             originals = sorted(aliases[lower])
@@ -135,7 +192,11 @@ def fix_tree(item_root, result=None):
                 result.errors.append(f"cannot create {_show(path)}: {error.strerror or error}")
             else:
                 result.created += 1
-                result.mods.add(_mod_name(rel))
+                if rel == ("mods",):
+                    result.mods.add(original)
+                    result.mod_folder_aliases.append(f"mods/{lower} -> {original}")
+                else:
+                    result.mods.add(_mod_name(rel))
     return result
 
 
@@ -176,6 +237,9 @@ def main(argv=None):
             mods = ", ".join(sorted(result.mods))
             print(f"Mod case fix: Workshop item {item} ({mods}): created {result.created} "
                   f"aliases, {result.existing} already present", flush=True)
+        for alias in result.mod_folder_aliases:
+            print(f"Mod case fix: Workshop item {item}: mod folder alias {_show(alias)} "
+                  "(animation XML uses x_extends/x_include)", flush=True)
         _report(f"WARNING: collision in {item}", result.collisions)
         _report(f"WARNING: error in {item}", result.errors)
 
